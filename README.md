@@ -1,0 +1,1 @@
+# cloud-thanos-store-discovery
