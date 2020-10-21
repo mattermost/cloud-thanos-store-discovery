@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -28,8 +30,17 @@ type config []struct {
 	Targets []string `yaml:"targets"`
 }
 
+type environmentVariables struct {
+	PrivateHostedZoneID  string
+	ThanosNamespace      string
+	ThanosDeploymentName string
+	ThanosConfigMapName  string
+	MattermostAlertsHook string
+	DevMode              string
+}
+
 func main() {
-	err := validateEnvironmentVariables()
+	envVars, err := validateAndGetEnvVars()
 	if err != nil {
 		log.WithError(err).Error("Environment variable validation failed")
 		err = sendMattermostErrorNotification(err, "Environment variable validation failed")
@@ -39,7 +50,7 @@ func main() {
 		return
 	}
 
-	err = thanosStoreDiscovery()
+	err = thanosStoreDiscovery(envVars)
 	if err != nil {
 		log.WithError(err).Error("Failed to run Thanos store discovery")
 		err = sendMattermostErrorNotification(err, "The Thanos store discovery failed")
@@ -51,43 +62,52 @@ func main() {
 }
 
 // validateEnvironmentVariables is used to validate the environment variables needed by Thanos store discovery.
-func validateEnvironmentVariables() error {
+func validateAndGetEnvVars() (environmentVariables, error) {
+	var envVars environmentVariables
 	privateHostedZoneID := os.Getenv("PRIVATE_HOSTED_ZONE_ID")
 	if len(privateHostedZoneID) == 0 {
-		return errors.Errorf("PRIVATE_HOSTED_ZONE_ID environment variable is not set")
+		return envVars, errors.Errorf("PRIVATE_HOSTED_ZONE_ID environment variable is not set")
 	}
+	envVars.PrivateHostedZoneID = privateHostedZoneID
 
 	thanosNamespace := os.Getenv("THANOS_NAMESPACE")
 	if len(thanosNamespace) == 0 {
-		return errors.Errorf("THANOS_NAMESPACE environment variable is not set")
+		return envVars, errors.Errorf("THANOS_NAMESPACE environment variable is not set")
 	}
+	envVars.ThanosNamespace = thanosNamespace
 
 	thanosDeploymentName := os.Getenv("THANOS_DEPLOYMENT_NAME")
 	if len(thanosDeploymentName) == 0 {
-		return errors.Errorf("THANOS_DEPLOYMENT_NAME environment variable is not set.")
+		return envVars, errors.Errorf("THANOS_DEPLOYMENT_NAME environment variable is not set.")
 	}
+	envVars.ThanosDeploymentName = thanosDeploymentName
 
 	thanosConfigMapName := os.Getenv("THANOS_CONFIGMAP_NAME")
 	if len(thanosConfigMapName) == 0 {
-		return errors.Errorf("THANOS_CONFIGMAP_NAME environment variable is not set.")
+		return envVars, errors.Errorf("THANOS_CONFIGMAP_NAME environment variable is not set.")
 	}
+	envVars.ThanosConfigMapName = thanosConfigMapName
 
 	mattermostAlertsHook := os.Getenv("MATTERMOST_ALERTS_HOOK")
 	if len(mattermostAlertsHook) == 0 {
-		return errors.Errorf("MATTERMOST_ALERTS_HOOK environment variable is not set.")
+		return envVars, errors.Errorf("MATTERMOST_ALERTS_HOOK environment variable is not set.")
 	}
-	return nil
+	envVars.MattermostAlertsHook = mattermostAlertsHook
+
+	developerMode := os.Getenv("DEVELOPER_MODE")
+	if len(developerMode) == 0 {
+		envVars.DevMode = "false"
+	} else {
+		envVars.DevMode = developerMode
+	}
+
+	return envVars, nil
 }
 
 // thanosStoreDiscovery is used to keep Thanos up to date with deployed Thanos Query targets.
-func thanosStoreDiscovery() error {
-	privateHostedZoneID := os.Getenv("PRIVATE_HOSTED_ZONE_ID")
-	thanosNamespace := os.Getenv("THANOS_NAMESPACE")
-	thanosDeploymentName := os.Getenv("THANOS_DEPLOYMENT_NAME")
-	thanosConfigMapName := os.Getenv("THANOS_CONFIGMAP_NAME")
-
-	log.Infof("Getting Route53 records for hostedzone %s", privateHostedZoneID)
-	records, err := listAllRecordSets(privateHostedZoneID)
+func thanosStoreDiscovery(envVars environmentVariables) error {
+	log.Infof("Getting Route53 records for hostedzone %s", envVars.PrivateHostedZoneID)
+	records, err := listAllRecordSets(envVars.PrivateHostedZoneID)
 	if err != nil {
 		return errors.Wrap(err, "Unable to get the existing Thanos Route53 records")
 	}
@@ -99,27 +119,12 @@ func thanosStoreDiscovery() error {
 	}
 	route53Targets := addPortToTargets(thanosRecords)
 
-	// This part can be used for local testing
-	// kubeconfig := filepath.Join(
-	// 	os.Getenv("HOME"), ".kube", "config",
-	// )
-
-	// config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	// if err != nil {
-	// 	return err
-	// }
-
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return errors.Wrap(err, "Unable to set k8s access config")
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := getClientSet(envVars)
 	if err != nil {
 		return errors.Wrap(err, "Unable to create k8s clientset")
 	}
 
-	configMapTargets, err := getConfigMapTargets(thanosConfigMapName, thanosNamespace, clientset)
+	configMapTargets, err := getConfigMapTargets(envVars.ThanosConfigMapName, envVars.ThanosNamespace, clientset)
 	if err != nil && !errors.IsNotFound(err) {
 		return errors.Wrap(err, "Unable to get existing configmap targets")
 	}
@@ -128,12 +133,12 @@ func thanosStoreDiscovery() error {
 
 	if len(configMapTargets) < 1 || !configMapUpToDate {
 		log.Info("The Thanos configmap targets are not up to date with existing Route53 Thanos targets")
-		err = createOrUpdateTargetConfigMap(route53Targets, thanosConfigMapName, thanosNamespace, clientset)
+		err = createOrUpdateTargetConfigMap(route53Targets, envVars.ThanosConfigMapName, envVars.ThanosNamespace, clientset)
 		if err != nil {
 			return errors.Wrap(err, "Unable to create or update the Thanos Query configmap")
 		}
 
-		err = rotateQueryPods(thanosNamespace, thanosDeploymentName, clientset)
+		err = rotateQueryPods(envVars.ThanosNamespace, envVars.ThanosDeploymentName, clientset)
 		if err != nil {
 			return errors.Wrap(err, "Unable to rotate Thanos Query pods")
 		}
@@ -145,16 +150,53 @@ func thanosStoreDiscovery() error {
 	return nil
 }
 
+func getClientSet(envVars environmentVariables) (*kubernetes.Clientset, error) {
+	if envVars.DevMode == "true" {
+
+		kubeconfig := filepath.Join(
+			os.Getenv("HOME"), ".kube", "config",
+		)
+
+		config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		clientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return nil, err
+		}
+		return clientset, nil
+	}
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	return clientset, nil
+}
+
 // checkIfConfigMapUpToDate is used to check if the current configmap targets are up to date with the deploye Route53 targets.
 func checkIfConfigMapUpToDate(configMapTargets, route53Targets []string) bool {
 	if len(route53Targets) != len(configMapTargets) {
 		return false
 	}
 
-	for i, v := range route53Targets {
-		if v != configMapTargets[i] {
+	targetExists := false
+	for _, route53Target := range route53Targets {
+		for _, configMapTarget := range configMapTargets {
+			if route53Target == configMapTarget {
+				targetExists = true
+				break
+			}
+		}
+		if targetExists == false {
 			return false
 		}
+		targetExists = false
 	}
 	return true
 }
@@ -309,12 +351,12 @@ func rotateQueryPods(thanosNamespace, thanosDeploymentName string, clientset *ku
 			return err
 		}
 
-		queryPods, err = getPodsFromDeployment(thanosNamespace, thanosDeploymentName, clientset)
+		newQueryPods, err := getPodsFromDeployment(thanosNamespace, thanosDeploymentName, clientset)
 		if err != nil {
 			return err
 		}
 		log.Infof("Waiting up to %d seconds for all %q pods to start...", wait, thanosDeploymentName)
-		for _, newPod := range queryPods.Items {
+		for _, newPod := range newQueryPods.Items {
 			if newPod.GetName() != pod.GetName() {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(wait)*time.Second)
 				defer cancel()
