@@ -129,7 +129,7 @@ func thanosStoreDiscovery(envVars environmentVariables) error {
 		return errors.Wrap(err, "Unable to get existing configmap targets")
 	}
 
-	configMapUpToDate := checkIfConfigMapUpToDate(configMapTargets, route53Targets)
+	configMapUpToDate := isConfigMapUpToDate(configMapTargets, route53Targets)
 
 	if len(configMapTargets) < 1 || !configMapUpToDate {
 		log.Info("The Thanos configmap targets are not up to date with existing Route53 Thanos targets")
@@ -179,8 +179,8 @@ func getClientSet(envVars environmentVariables) (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-// checkIfConfigMapUpToDate is used to check if the current configmap targets are up to date with the deploye Route53 targets.
-func checkIfConfigMapUpToDate(configMapTargets, route53Targets []string) bool {
+// isConfigMapUpToDate is used to check if the current configmap targets are up to date with the deploye Route53 targets.
+func isConfigMapUpToDate(configMapTargets, route53Targets []string) bool {
 	if len(route53Targets) != len(configMapTargets) {
 		return false
 	}
