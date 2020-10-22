@@ -62,35 +62,35 @@ func main() {
 }
 
 // validateEnvironmentVariables is used to validate the environment variables needed by Thanos store discovery.
-func validateAndGetEnvVars() (environmentVariables, error) {
-	var envVars environmentVariables
+func validateAndGetEnvVars() (*environmentVariables, error) {
+	envVars := &environmentVariables{}
 	privateHostedZoneID := os.Getenv("PRIVATE_HOSTED_ZONE_ID")
 	if len(privateHostedZoneID) == 0 {
-		return envVars, errors.Errorf("PRIVATE_HOSTED_ZONE_ID environment variable is not set")
+		return nil, errors.Errorf("PRIVATE_HOSTED_ZONE_ID environment variable is not set")
 	}
 	envVars.PrivateHostedZoneID = privateHostedZoneID
 
 	thanosNamespace := os.Getenv("THANOS_NAMESPACE")
 	if len(thanosNamespace) == 0 {
-		return envVars, errors.Errorf("THANOS_NAMESPACE environment variable is not set")
+		return nil, errors.Errorf("THANOS_NAMESPACE environment variable is not set")
 	}
 	envVars.ThanosNamespace = thanosNamespace
 
 	thanosDeploymentName := os.Getenv("THANOS_DEPLOYMENT_NAME")
 	if len(thanosDeploymentName) == 0 {
-		return envVars, errors.Errorf("THANOS_DEPLOYMENT_NAME environment variable is not set.")
+		return nil, errors.Errorf("THANOS_DEPLOYMENT_NAME environment variable is not set.")
 	}
 	envVars.ThanosDeploymentName = thanosDeploymentName
 
 	thanosConfigMapName := os.Getenv("THANOS_CONFIGMAP_NAME")
 	if len(thanosConfigMapName) == 0 {
-		return envVars, errors.Errorf("THANOS_CONFIGMAP_NAME environment variable is not set.")
+		return nil, errors.Errorf("THANOS_CONFIGMAP_NAME environment variable is not set.")
 	}
 	envVars.ThanosConfigMapName = thanosConfigMapName
 
 	mattermostAlertsHook := os.Getenv("MATTERMOST_ALERTS_HOOK")
 	if len(mattermostAlertsHook) == 0 {
-		return envVars, errors.Errorf("MATTERMOST_ALERTS_HOOK environment variable is not set.")
+		return nil, errors.Errorf("MATTERMOST_ALERTS_HOOK environment variable is not set.")
 	}
 	envVars.MattermostAlertsHook = mattermostAlertsHook
 
@@ -105,7 +105,7 @@ func validateAndGetEnvVars() (environmentVariables, error) {
 }
 
 // thanosStoreDiscovery is used to keep Thanos up to date with deployed Thanos Query targets.
-func thanosStoreDiscovery(envVars environmentVariables) error {
+func thanosStoreDiscovery(envVars *environmentVariables) error {
 	log.Infof("Getting Route53 records for hostedzone %s", envVars.PrivateHostedZoneID)
 	records, err := listAllRecordSets(envVars.PrivateHostedZoneID)
 	if err != nil {
@@ -150,7 +150,7 @@ func thanosStoreDiscovery(envVars environmentVariables) error {
 	return nil
 }
 
-func getClientSet(envVars environmentVariables) (*kubernetes.Clientset, error) {
+func getClientSet(envVars *environmentVariables) (*kubernetes.Clientset, error) {
 	if envVars.DevMode == "true" {
 
 		kubeconfig := filepath.Join(
@@ -185,8 +185,8 @@ func isConfigMapUpToDate(configMapTargets, route53Targets []string) bool {
 		return false
 	}
 
-	targetExists := false
 	for _, route53Target := range route53Targets {
+		targetExists := false
 		for _, configMapTarget := range configMapTargets {
 			if route53Target == configMapTarget {
 				targetExists = true
@@ -196,7 +196,6 @@ func isConfigMapUpToDate(configMapTargets, route53Targets []string) bool {
 		if targetExists == false {
 			return false
 		}
-		targetExists = false
 	}
 	return true
 }
@@ -351,6 +350,14 @@ func rotateQueryPods(thanosNamespace, thanosDeploymentName string, clientset *ku
 			return err
 		}
 
+		log.Infof("Waiting up to %d seconds for pod %q to be deleted...", wait, pod.GetName())
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(wait)*time.Second)
+		defer cancel()
+		_, err := waitForPodDeleted(ctx, thanosNamespace, pod.GetName(), clientset)
+		if err != nil {
+			return err
+		}
+
 		newQueryPods, err := getPodsFromDeployment(thanosNamespace, thanosDeploymentName, clientset)
 		if err != nil {
 			return err
@@ -393,6 +400,23 @@ func getPodsFromDeployment(namespace, deploymentName string, clientset *kubernet
 	listOptions := metav1.ListOptions{LabelSelector: set.AsSelector().String()}
 
 	return clientset.CoreV1().Pods(namespace).List(ctx, listOptions)
+}
+
+// waitForPodDeleted is used to ensure that a pod is deleted
+func waitForPodDeleted(ctx context.Context, namespace, podName string, clientset *kubernetes.Clientset) (*corev1.Pod, error) {
+	for {
+		_, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil && k8serrors.IsNotFound(err) {
+			log.Infof("Pod %s was deleted, moving on", podName)
+			return &corev1.Pod{}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, errors.Wrap(ctx.Err(), "timed out waiting for pod to be deleted")
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // waitForPodRunning is used to ensure that a pod is running and status condition is ready
