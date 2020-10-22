@@ -1,5 +1,5 @@
 # Build the cloud thanos store discovery
-ARG DOCKER_BUILD_IMAGE=golang:1.14.4
+ARG DOCKER_BUILD_IMAGE=golang:1.14.10
 ARG DOCKER_BASE_IMAGE=alpine:3.12
 
 FROM ${DOCKER_BUILD_IMAGE} AS build
