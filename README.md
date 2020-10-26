@@ -5,7 +5,7 @@ Mattermost Thanos store discovery tool is a microservice designed to work in a m
 
 ## How it works?
 
-This microservice needs to run in the same cluster and namespace that the central Thanos deployment is running. It can be deployed as a cronjob that runs every x amount of minutes and keeps the central Thanos Querier up to date with all the target endpoints. More details on how it works can be seen in the following diagram.
+This microservice needs to run in the same cluster and namespace where the central Thanos deployment is running. It can be deployed as a cronjob that runs every x amount of minutes and keeps the central Thanos Querier up to date with all the target endpoints. More details on how it works can be seen in the following diagram.
 
 <span style="display:block;text-align:center">![store-discovery](/img/store-discovery.png)</span>
 
