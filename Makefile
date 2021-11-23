@@ -3,8 +3,8 @@
 ################################################################################
 
 ## Docker Build Versions
-DOCKER_BUILD_IMAGE = golang:1.14.10
-DOCKER_BASE_IMAGE = alpine:3.12
+DOCKER_BUILD_IMAGE = golang:1.17.3
+DOCKER_BASE_IMAGE = alpine:3.14
 
 ################################################################################
 
@@ -56,6 +56,7 @@ build: ## Build the cloud-thanos-store-discovery
 	@echo Building Cloud-Thanos-Store-Discovery
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -gcflags all=-trimpath=$(PWD) -asmflags all=-trimpath=$(PWD) -a -installsuffix cgo -o build/_output/bin/main  ./
 
+.PHONY: build-image
 build-image:  ## Build the docker image for cloud-thanos-store-discovery
 	@echo Building Cloud-Thanos-Store-Discovery Docker Image
 	docker build \
