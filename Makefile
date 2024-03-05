@@ -133,7 +133,8 @@ build-image:  ## Build the docker image for cloud-thanos-store-discovery
 	--build-arg DOCKER_BUILD_IMAGE=$(DOCKER_BUILD_IMAGE) \
 	--build-arg DOCKER_BASE_IMAGE=$(DOCKER_BASE_IMAGE) \
 	. -f build/Dockerfile -t $(CLOUD_THANOS_STORE_DISCOVERY_IMAGE) \
-	--no-cache
+	--no-cache \
+	--push
 
 .PHONY: build-image-with-tag
 build-image-with-tag:  ## Build the docker image for cloud-thanos-store-discovery
@@ -148,7 +149,18 @@ build-image-with-tag:  ## Build the docker image for cloud-thanos-store-discover
 	--build-arg DOCKER_BUILD_IMAGE=$(DOCKER_BUILD_IMAGE) \
 	--build-arg DOCKER_BASE_IMAGE=$(DOCKER_BASE_IMAGE) \
 	. -f build/Dockerfile -t $(CLOUD_THANOS_STORE_DISCOVERY_IMAGE) -t $(CLOUD_THANOS_STORE_DISCOVERY_REPO):${TAG} \
-	--no-cache
+	--no-cache \
+	--push
+
+.PHONY: push-image-pr
+push-image-pr:
+	@echo Push Image PR
+	./scripts/push-image-pr.sh
+
+.PHONY: push-image
+push-image:
+	@echo Push Image
+	./scripts/push-image.sh
 
 .PHONY: install
 install: build

@@ -1,11 +1,9 @@
 module github.com/mattermost/cloud-thanos-store-discovery
 
-go 1.21
-
-toolchain go1.21.3
+go 1.20
 
 require (
-	github.com/aws/aws-sdk-go v1.50.31
+	github.com/aws/aws-sdk-go v1.50.35
 	github.com/mattermost/mattermost-server/v5 v5.39.3
 	github.com/pingcap/errors v0.11.4
 	github.com/pkg/errors v0.9.1
