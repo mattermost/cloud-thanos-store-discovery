@@ -1,21 +1,22 @@
 # Build the cloud thanos store discovery
-ARG DOCKER_BUILD_IMAGE=golang:1.17.3
-ARG DOCKER_BASE_IMAGE=alpine:3.14
+ARG DOCKER_BUILD_IMAGE=golang:1.20
+ARG DOCKER_BASE_IMAGE=alpine:3.19
 
-FROM ${DOCKER_BUILD_IMAGE} AS build
+FROM --platform=${TARGETPLATFORM} ${DOCKER_BUILD_IMAGE} AS build
 WORKDIR /cloud-thanos-store-discovery/
 COPY . /cloud-thanos-store-discovery/
+ENV ARCH=${TARGETARCH}
+
 RUN apt-get update -yq && apt-get install -yq unzip
-RUN make build
+RUN make build ARCH=${ARCH}
 
 
 # Final Image
-FROM ${DOCKER_BASE_IMAGE}
+FROM --platform=${TARGETPLATFORM} ${DOCKER_BASE_IMAGE}
 LABEL name="Mattermost Cloud Thanos Store Discovery" \
   maintainer="cloud-team@mattermost.com" \
   vendor="Mattermost" \
   distribution-scope="public" \
-  architecture="x86_64" \
   url="https://mattermost.com" \
   io.k8s.description="Mattermost Cloud Thanos Store Discovery is responsible for registering new Thanos Query endpoints" \
   io.k8s.display-name="Mattermost Cloud Thanos Store Discovery"
