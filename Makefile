@@ -17,6 +17,9 @@ BUILD_TIME := $(shell date -u +%Y%m%d.%H%M%S)
 BUILD_HASH := $(shell git rev-parse HEAD)
 
 ################################################################################
+TOOLS_BIN_DIR := $(abspath bin)
+GO_INSTALL = ./scripts/go_install.sh
+
 
 LOGRUS_URL := github.com/sirupsen/logrus
 
@@ -24,13 +27,21 @@ LOGRUS_VERSION := $(shell find go.mod -type f -exec cat {} + | grep ${LOGRUS_URL
 
 LOGRUS_PATH := $(GOPATH)/pkg/mod/${LOGRUS_URL}\@${LOGRUS_VERSION}
 
+OUTDATED_VER := master
+OUTDATED_BIN := go-mod-outdated
+OUTDATED_GEN := $(TOOLS_BIN_DIR)/$(OUTDATED_BIN)
+
+GOIMPORTS_VER := master
+GOIMPORTS_BIN := goimports
+GOIMPORTS := $(TOOLS_BIN_DIR)/$(GOIMPORTS_BIN)
+
 export GO111MODULE=on
 
 all: check-style dist
 
 ## Runs govet and gofmt against all packages.
 .PHONY: check-style
-check-style: govet lint
+check-style: govet lint goimports goformat
 	@echo Checking for style guide compliance
 
 ## Runs lint against all packages.
@@ -47,6 +58,47 @@ govet:
 	@echo Running govet
 	$(GO) vet ./...
 	@echo Govet success
+
+## Checks if files are formatted with go fmt.
+.PHONY: goformat
+goformat:
+	@echo Checking if code is formatted
+	@for package in $(PACKAGES); do \
+		echo "Checking "$$package; \
+		files=$$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}' $$package); \
+		if [ "$$files" ]; then \
+			gofmt_output=$$(gofmt -d -s $$files 2>&1); \
+			if [ "$$gofmt_output" ]; then \
+				echo "$$gofmt_output"; \
+				echo "gofmt failed"; \
+				echo "To fix it, run:"; \
+				echo "go fmt [FAILED_PACKAGE]"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+	@echo "gofmt success"; \
+
+
+## Checks if imports are formatted correctly.
+.PHONY: goimports
+goimports: $(GOIMPORTS)
+	@echo Checking if imports are sorted
+	@for package in $(PACKAGES); do \
+		echo "Checking "$$package; \
+		files=$$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}' $$package); \
+		if [ "$$files" ]; then \
+			goimports_output=$$($(GOIMPORTS) -d $$files 2>&1); \
+			if [ "$$goimports_output" ]; then \
+				echo "$$goimports_output"; \
+				echo "goimports failed"; \
+				echo "To fix it, run:"; \
+				echo "goimports -w [FAILED_PACKAGE]"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+	@echo "goimports success"; \
 
 ## Builds and thats all :)
 .PHONY: dist
@@ -101,3 +153,22 @@ build-image-with-tag:  ## Build the docker image for cloud-thanos-store-discover
 .PHONY: install
 install: build
 	go install ./...
+
+.PHONY: check-modules
+check-modules: $(OUTDATED_GEN) ## Check outdated modules
+	@echo Checking outdated modules
+	$(GO) list -mod=mod -u -m -json all | $(OUTDATED_GEN) -update -direct
+
+.PHONY: update-modules
+update-modules: $(OUTDATED_GEN) ## Check outdated modules
+	@echo Update modules
+	$(GO) get -u ./...
+	$(GO) mod tidy
+## --------------------------------------
+## Tooling Binaries
+## --------------------------------------
+
+$(GOIMPORTS): ## Build goimports.
+	GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) golang.org/x/tools/cmd/goimports $(GOIMPORTS_BIN) $(GOIMPORTS_VER)
+$(OUTDATED_GEN): ## Build go-mod-outdated.
+	GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) github.com/psampaz/go-mod-outdated $(OUTDATED_BIN) $(OUTDATED_VER)
