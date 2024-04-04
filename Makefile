@@ -3,7 +3,7 @@
 ################################################################################
 
 ## Docker Build Versions
-DOCKER_BUILD_IMAGE = golang:1.20
+DOCKER_BUILD_IMAGE = golang:1.21
 DOCKER_BASE_IMAGE = alpine:3.19
 
 ################################################################################
@@ -34,6 +34,8 @@ OUTDATED_GEN := $(TOOLS_BIN_DIR)/$(OUTDATED_BIN)
 GOIMPORTS_VER := master
 GOIMPORTS_BIN := goimports
 GOIMPORTS := $(TOOLS_BIN_DIR)/$(GOIMPORTS_BIN)
+
+ARCH ?= amd64
 
 export GO111MODULE=on
 
@@ -106,8 +108,7 @@ dist:	build
 
 .PHONY: build
 build: ## Build the cloud-thanos-store-discovery
-	@echo Building Cloud-Thanos-Store-Discovery
-	@echo Building Elrond for ARCH=$(ARCH)
+	@echo Building Cloud-Thanos-Store-Discovery for ARCH=$(ARCH)
 	@if [ "$(ARCH)" = "amd64" ]; then \
 		export GOARCH="amd64"; \
 	elif [ "$(ARCH)" = "arm64" ]; then \
@@ -152,6 +153,22 @@ build-image-with-tag:  ## Build the docker image for cloud-thanos-store-discover
 	--no-cache \
 	--push
 
+.PHONY: build-image-locally
+build-image-locally:  ## Build the docker image for cloud-thanos-store-discovery
+	@echo Building Cloud-Thanos-Store-Discovery Docker Image
+	@if [ -z "$(DOCKER_USERNAME)" ] || [ -z "$(DOCKER_PASSWORD)" ]; then \
+		echo "DOCKER_USERNAME and/or DOCKER_PASSWORD not set. Skipping Docker login."; \
+	else \
+		echo $(DOCKER_PASSWORD) | docker login --username $(DOCKER_USERNAME) --password-stdin; \
+	fi
+	docker buildx build \
+    --platform linux/arm64 \
+	--build-arg DOCKER_BUILD_IMAGE=$(DOCKER_BUILD_IMAGE) \
+	--build-arg DOCKER_BASE_IMAGE=$(DOCKER_BASE_IMAGE) \
+	. -f build/Dockerfile -t $(CLOUD_THANOS_STORE_DISCOVERY_IMAGE) \
+	--no-cache \
+	--load
+
 .PHONY: push-image-pr
 push-image-pr:
 	@echo Push Image PR
@@ -161,6 +178,10 @@ push-image-pr:
 push-image:
 	@echo Push Image
 	./scripts/push-image.sh
+
+.PHONY: scan
+scan:
+	docker scout cves ${IMAGE}
 
 .PHONY: install
 install: build

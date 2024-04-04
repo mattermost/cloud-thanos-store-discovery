@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	model "github.com/mattermost/mattermost-server/v5/model"
+	model "github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 )
 
